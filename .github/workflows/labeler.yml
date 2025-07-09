@@ -11,7 +11,7 @@ jobs:
     steps:
     - uses: actions/labeler@v5
       with:
-        repo_token: ${{ secrets.LABELER_TOKEN }}
+        repo-token: ${{ secrets.LABELER_TOKEN }}
 
         
         
