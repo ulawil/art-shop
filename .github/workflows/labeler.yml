@@ -12,6 +12,60 @@ jobs:
     - uses: actions/labeler@v5
       with:
         repo-token: ${{ secrets.LABELER_TOKEN }}
+  label-custom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label PR as draft or ready
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const draftLabel = 'draft';
+            const readyLabel = 'ready for review';
+
+            let labelsToAdd = [];
+            let labelsToRemove = [];
+
+            if (pr.draft) {
+              console.log(`PR #${pr.number} is draft`);
+              labelsToAdd.push(draftLabel);
+              labelsToRemove.push(readyLabel);
+            } else {
+              console.log(`PR #${pr.number} is ready for review`);
+              labelsToAdd.push(readyLabel);
+              labelsToRemove.push(draftLabel);
+            }
+
+            // Add labels (only if there are any)
+            if (labelsToAdd.length > 0) {
+              console.log(`Adding labels: ${labelsToAdd.join(', ')}`);
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: labelsToAdd,
+              });
+            }
+
+            // Remove labels (handle not-found errors gracefully)
+            for (const label of labelsToRemove) {
+              console.log(`Removing label: ${label}`);
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: label,
+                });
+              } catch (e) {
+                if (e.status === 404) {
+                  console.log(`Label '${label}' was not present, nothing to remove.`);
+                } else {
+                  throw e;
+                }
+              }
+            }
 
         
         
