@@ -30,8 +30,8 @@ jobs:
           github-token: ${{ secrets.LABELER_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
-            const draftLabel = 'status: draft';
-            const readyLabel = 'status: ready for review';
+            const draftLabel = 'draft';
+            const readyLabel = 'ready for review';
             const needsAnotherReviewLabel = 'needs another review';
             const readyToMergeLabel = 'ready to merge';
 
@@ -56,16 +56,17 @@ jobs:
               pull_number: pr.number,
             });
 
-            // Count unique reviewers who approved
-            const approvedReviewers = new Set();
-            for (const review of reviews) {
-              if (review.state === 'APPROVED') {
-                approvedReviewers.add(review.user.login);
-              }
-            }
+            // Get unique logins of reviewers who approved
+            const approvedReviewers = new Set(
+              reviews
+                .filter(review => review.state === 'APPROVED')
+                .map(review => review.user.login)
+            );
+
             const reviewCount = approvedReviewers.size;
 
             console.log(`PR #${pr.number} has ${reviewCount} unique approvals`);
+
 
             // Add/remove labels based on review count
             if (reviewCount === 1) {
