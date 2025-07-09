@@ -1,7 +1,10 @@
 name: "Pull Request Labeler"
+
 on:
   pull_request:
-    types: [opened, ready_for_review, converted_to_draft]
+    types: [opened, ready_for_review, converted_to_draft, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   labeler:
@@ -10,24 +13,31 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/labeler@v5
-      with:
-        repo-token: ${{ secrets.LABELER_TOKEN }}
+      - uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.LABELER_TOKEN }}
+
   label-custom:
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Label PR as draft or ready
+      - name: Label PR as draft, ready, or based on reviews
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.LABELER_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
-            const draftLabel = 'draft';
-            const readyLabel = 'ready for review';
+            const draftLabel = 'status: draft';
+            const readyLabel = 'status: ready for review';
+            const needsAnotherReviewLabel = 'needs another review';
+            const readyToMergeLabel = 'ready to merge';
 
             let labelsToAdd = [];
             let labelsToRemove = [];
 
+            // Label based on draft state
             if (pr.draft) {
               console.log(`PR #${pr.number} is draft`);
               labelsToAdd.push(draftLabel);
@@ -38,7 +48,41 @@ jobs:
               labelsToRemove.push(draftLabel);
             }
 
-            // Add labels (only if there are any)
+            // Fetch all reviews on the PR
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+
+            // Count unique reviewers who approved
+            const approvedReviewers = new Set();
+            for (const review of reviews) {
+              if (review.state === 'APPROVED') {
+                approvedReviewers.add(review.user.login);
+              }
+            }
+            const reviewCount = approvedReviewers.size;
+
+            console.log(`PR #${pr.number} has ${reviewCount} unique approvals`);
+
+            // Add/remove labels based on review count
+            if (reviewCount === 1) {
+              labelsToAdd.push(needsAnotherReviewLabel);
+              labelsToRemove.push(readyToMergeLabel);
+            } else if (reviewCount >= 2) {
+              labelsToAdd.push(readyToMergeLabel);
+              labelsToRemove.push(needsAnotherReviewLabel);
+            } else {
+              // No approvals yet: remove both labels
+              labelsToRemove.push(needsAnotherReviewLabel, readyToMergeLabel);
+            }
+
+            // Deduplicate labels
+            labelsToAdd = [...new Set(labelsToAdd)];
+            labelsToRemove = [...new Set(labelsToRemove)];
+
+            // Add labels (if any)
             if (labelsToAdd.length > 0) {
               console.log(`Adding labels: ${labelsToAdd.join(', ')}`);
               await github.rest.issues.addLabels({
@@ -49,9 +93,8 @@ jobs:
               });
             }
 
-            // Remove labels (handle not-found errors gracefully)
+            // Remove labels gracefully
             for (const label of labelsToRemove) {
-              console.log(`Removing label: ${label}`);
               try {
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
@@ -59,15 +102,12 @@ jobs:
                   issue_number: pr.number,
                   name: label,
                 });
+                console.log(`Removed label: ${label}`);
               } catch (e) {
                 if (e.status === 404) {
-                  console.log(`Label '${label}' was not present, nothing to remove.`);
+                  console.log(`Label '${label}' not present, skipping removal.`);
                 } else {
                   throw e;
                 }
               }
             }
-
-        
-        
-    
