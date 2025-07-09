@@ -29,73 +29,77 @@ jobs:
         with:
           github-token: ${{ secrets.LABELER_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
-            const draftLabel = 'draft';
-            const readyLabel = 'ready for review';
-            const needsAnotherReviewLabel = 'needs another review';
-            const readyToMergeLabel = 'ready to merge';
+            const draftLabel = 'Draft';
+            const readyLabel = 'PR Review';
+            const needsAnotherReviewLabel = 'Needs 2nd Review';
+            const readyToMergeLabel = 'Ready to Merge';
 
-            let labelsToAdd = [];
-            let labelsToRemove = [];
-
-            // Label based on draft state
-            if (pr.draft) {
-              console.log(`PR #${pr.number} is draft`);
-              labelsToAdd.push(draftLabel);
-              labelsToRemove.push(readyLabel);
-            } else {
-              console.log(`PR #${pr.number} is ready for review`);
-              labelsToAdd.push(readyLabel);
-              labelsToRemove.push(draftLabel);
-            }
-
-            // Fetch all reviews on the PR
-            const { data: reviews } = await github.rest.pulls.listReviews({
+            const { data: currentLabelsData } = await github.rest.issues.listLabelsOnIssue({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pr.number,
+              issue_number: pr.number,
             });
+            
+            const currentLabels = currentLabelsData.map(label => label.name);
+            const labelsToAdd = new Set();
+            const labelsToRemove = new Set();
 
-            // Get unique logins of reviewers who approved
-            const approvedReviewers = new Set(
-              reviews
-                .filter(review => review.state === 'APPROVED')
-                .map(review => review.user.login)
-            );
-
-            const reviewCount = approvedReviewers.size;
-
-            console.log(`PR #${pr.number} has ${reviewCount} unique approvals`);
-
-
-            // Add/remove labels based on review count
-            if (reviewCount === 1) {
-              labelsToAdd.push(needsAnotherReviewLabel);
-              labelsToRemove.push(readyToMergeLabel);
-            } else if (reviewCount >= 2) {
-              labelsToAdd.push(readyToMergeLabel);
-              labelsToRemove.push(needsAnotherReviewLabel);
+            if (pr.draft) {
+              console.log(`PR #${pr.number} is draft`);
+              if (!currentLabels.includes(draftLabel)) {
+                labelsToAdd.add(draftLabel);
+              }
+              [readyLabel, needsAnotherReviewLabel, readyToMergeLabel].forEach(label => {
+                if (currentLabels.includes(label)) labelsToRemove.add(label);
+              });
             } else {
-              // No approvals yet: remove both labels
-              labelsToRemove.push(needsAnotherReviewLabel, readyToMergeLabel);
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+
+              const approvedReviewers = new Set(
+                reviews
+                  .filter(review => review.state === 'APPROVED')
+                  .map(review => review.user.login)
+              );
+              const reviewCount = approvedReviewers.size;
+              console.log(`PR #${pr.number} has ${reviewCount} unique approvals`);
+
+              let targetLabel;
+              switch (reviewCount) {
+                case 0:
+                  targetLabel = readyLabel;
+                  break;
+                case 1:
+                  targetLabel = needsAnotherReviewLabel;
+                  break;
+                default:
+                  targetLabel = readyToMergeLabel;
+              }
+
+              if (!currentLabels.includes(targetLabel)) {
+                labelsToAdd.add(targetLabel);
+              }
+
+              [draftLabel, readyLabel, needsAnotherReviewLabel, readyToMergeLabel].forEach(label => {
+                if (label !== targetLabel && currentLabels.includes(label)) {
+                  labelsToRemove.add(label);
+                }
+              });
             }
 
-            // Deduplicate labels
-            labelsToAdd = [...new Set(labelsToAdd)];
-            labelsToRemove = [...new Set(labelsToRemove)];
-
-            // Add labels (if any)
-            if (labelsToAdd.length > 0) {
-              console.log(`Adding labels: ${labelsToAdd.join(', ')}`);
+            if (labelsToAdd.size > 0) {
+              console.log(`Adding labels: ${Array.from(labelsToAdd).join(', ')}`);
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pr.number,
-                labels: labelsToAdd,
+                labels: Array.from(labelsToAdd),
               });
             }
 
-            // Remove labels gracefully
             for (const label of labelsToRemove) {
               try {
                 await github.rest.issues.removeLabel({
@@ -113,11 +117,12 @@ jobs:
                 }
               }
             }
+
             
   unit-test:
     if: github.event_name != 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
       - name: Dummy unit test step
-        run: echo "Running unit tests (skipped on review events)"
+        run: echo "Running unit tests"
         
