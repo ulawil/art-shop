@@ -14,8 +14,8 @@ on:
 jobs:
   call-labeler:
     uses: ulawil/common-wortkflows/.github/workflows/labeler.yml@main
-    with:
-      labeler-token: ${{ secrets.LABELER_TOKEN }}
+    secrets:
+      LABELER_TOKEN: ${{ secrets.LABELER_TOKEN }}
     permissions:
       contents: read
       pull-requests: write
